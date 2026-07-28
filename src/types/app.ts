@@ -9,8 +9,10 @@ export type Classroom = {
   id: string;
   owner_id: string;
   name: string;
+  academic_year: number;
   grade: number;
   class_number: number;
+  archived_at: string | null;
   created_at: string;
 };
 
@@ -33,6 +35,7 @@ export type Season = {
   start_date: string;
   end_date: string | null;
   is_active: boolean;
+  archived_at: string | null;
   created_at: string;
 };
 

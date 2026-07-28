@@ -53,6 +53,8 @@ supabase/migrations/002_passive_mentor_grace.sql
 supabase/migrations/003_auto_seating_mentors.sql
 supabase/migrations/004_reset_class_mp.sql
 supabase/migrations/005_expand_mentor_grace.sql
+supabase/migrations/006_class_and_season_management.sql
+supabase/migrations/007_bulk_role_assignment.sql
 ```
 
 이 파일들은 다음을 생성합니다.
@@ -65,6 +67,8 @@ supabase/migrations/005_expand_mentor_grace.sql
 - 배치와 역할 변경 시 담당 수승님 관계 자동 동기화
 - 기존 거래 기록을 보존하는 학급 MP 전체 초기화
 - 수호자와 3인 모둠까지 포함하는 `수승의 은혜` 확장 규칙
+- 학년도별 학급 구분과 학급·운영 기간 수정, 보관, 복구, 영구 삭제
+- 학생 카드 다중 선택과 역할 일괄 설정
 
 ### 3-3. 교사 계정 만들기
 

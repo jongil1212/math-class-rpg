@@ -16,11 +16,13 @@ export function StudentCard({
   editable,
   onClick,
   overlay = false,
+  selected,
 }: {
   assignment: AssignmentWithStudent;
   editable: boolean;
   onClick?: () => void;
   overlay?: boolean;
+  selected?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: assignment.student_id,
@@ -36,7 +38,7 @@ export function StudentCard({
       ref={setNodeRef}
       style={style}
       type="button"
-      className={`student-card role-${assignment.role} ${editable ? "draggable" : ""} ${
+      className={`student-card role-${assignment.role} ${editable ? "draggable" : ""} ${selected ? "selected" : ""} ${
         isDragging ? "dragging" : ""
       }`}
       onClick={() => {
@@ -44,6 +46,7 @@ export function StudentCard({
       }}
       {...(editable ? attributes : {})}
       {...(editable ? listeners : {})}
+      aria-pressed={selected}
     >
       <div className="student-top">
         <span className="student-name">{assignment.student.name}</span>

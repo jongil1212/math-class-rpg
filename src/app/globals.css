@@ -194,6 +194,44 @@ h1, h2, h3, p { margin-top: 0; }
   text-align: center;
 }
 
+.bulk-role-panel {
+  display: grid;
+  gap: 13px;
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  background: linear-gradient(135deg, #eef5ff, #f7f3ff);
+  border: 1px solid #b8cae8;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(14,43,91,.09);
+}
+.bulk-role-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bulk-role-heading strong { font-size: 17px; }
+.bulk-role-heading p { margin-top: 4px; color: var(--muted); font-size: 13px; }
+.bulk-role-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.bulk-role-label {
+  padding-top: 7px;
+  color: #385276;
+  font-size: 12px;
+  font-weight: 900;
+}
+.bulk-role-buttons { display: flex; gap: 7px; flex-wrap: wrap; }
+.bulk-role-apply { border-width: 2px; background: white; }
+.bulk-role-apply.role-beginner { color: #365272; background: #f2f5f9; }
+.bulk-role-apply.role-disciple { color: #5f32ae; background: #f4efff; }
+.bulk-role-apply.role-mentor { color: #1258ad; background: #eaf3ff; }
+.bulk-role-apply.role-senior_mentor { color: #7b5003; background: #fff6dc; box-shadow: none; }
+.bulk-role-apply.role-guardian { color: #087158; background: #e8faf4; }
+
 .teacher-desk {
   width: min(340px, 56%);
   margin: 0 auto 18px;
@@ -278,6 +316,29 @@ h1, h2, h3, p { margin-top: 0; }
 .student-card.draggable { cursor: grab; }
 .student-card.dragging { opacity: .42; }
 .student-card:hover { transform: translateY(-1px); }
+.student-card.selected {
+  position: relative;
+  border-color: #315fe7;
+  background: linear-gradient(145deg, #ffffff, #e7efff);
+  box-shadow: 0 0 0 4px rgba(49,95,231,.22), 0 9px 22px rgba(14,43,91,.18);
+}
+.student-card.selected::after {
+  content: "✓";
+  position: absolute;
+  z-index: 3;
+  top: -8px;
+  right: -8px;
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  color: white;
+  background: #315fe7;
+  border: 2px solid white;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 900;
+}
 .student-card .student-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .student-card .student-name { font-weight: 900; font-size: 16px; }
 .student-card .student-number { color: var(--muted); font-size: 12px; }
@@ -370,6 +431,38 @@ h1, h2, h3, p { margin-top: 0; }
 .summary-box { padding: 13px; border-radius: 12px; background: #eef5ff; line-height: 1.55; }
 .warning-box { padding: 12px; border-radius: 12px; background: #fff3dc; color: #724906; line-height: 1.55; }
 
+.management-layout {
+  display: grid;
+  grid-template-columns: minmax(210px, .72fr) minmax(0, 1.28fr);
+  gap: 16px;
+  align-items: start;
+}
+.management-list {
+  display: grid;
+  gap: 7px;
+  max-height: 58vh;
+  overflow: auto;
+  padding-right: 3px;
+}
+.management-item {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 11px 12px;
+  color: var(--text);
+  text-align: left;
+  background: #f5f8fd;
+  border: 1px solid #d4deed;
+  border-radius: 11px;
+}
+.management-item.selected {
+  color: #123d83;
+  background: #e8f1ff;
+  border-color: #6b9be5;
+  box-shadow: inset 3px 0 0 #3478e5;
+}
+.management-item span { color: var(--muted); font-size: 12px; }
+
 .loading-screen { min-height: 60vh; display: grid; place-items: center; font-weight: 800; color: var(--muted); }
 .toast {
   position: fixed;
@@ -399,5 +492,9 @@ h1, h2, h3, p { margin-top: 0; }
   .groups-grid { grid-template-columns: 1fr; }
   .teacher-desk { width: 80%; font-size: 19px; }
   .action-grid, .two-columns { grid-template-columns: 1fr; }
+  .management-layout { grid-template-columns: 1fr; }
+  .bulk-role-heading { align-items: flex-start; }
+  .bulk-role-row { grid-template-columns: 1fr; gap: 4px; }
+  .bulk-role-label { padding-top: 0; }
   .board-card { padding: 10px; }
 }

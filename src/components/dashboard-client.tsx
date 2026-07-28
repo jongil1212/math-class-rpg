@@ -20,10 +20,22 @@ import {
 } from "@/types/app";
 
 type Toast = { message: string; kind: "success" | "error" } | null;
-type ModalName = "class" | "students" | "season" | "student" | null;
+type ModalName = "class" | "classManage" | "students" | "season" | "seasonManage" | "student" | null;
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function currentAcademicYear() {
+  return new Date().getFullYear();
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return fallback;
 }
 
 function roleProgress(assignment: AssignmentWithStudent) {
@@ -63,6 +75,7 @@ export default function DashboardClient({ email }: { email: string }) {
   const supabase = useMemo(() => createClient(), []);
 
   const [classes, setClasses] = useState<Classroom[]>([]);
+  const [academicYear, setAcademicYear] = useState<number | null>(null);
   const [selectedClassId, setSelectedClassId] = useState("");
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [selectedSeasonId, setSelectedSeasonId] = useState("");
@@ -74,6 +87,8 @@ export default function DashboardClient({ email }: { email: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [roleEditMode, setRoleEditMode] = useState(false);
+  const [selectedRoleStudentIds, setSelectedRoleStudentIds] = useState<Set<string>>(() => new Set());
   const [modal, setModal] = useState<ModalName>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<AssignmentWithStudent | null>(null);
   const [toast, setToast] = useState<Toast>(null);
@@ -81,7 +96,17 @@ export default function DashboardClient({ email }: { email: string }) {
 
   const selectedClass = classes.find((item) => item.id === selectedClassId) ?? null;
   const selectedSeason = seasons.find((item) => item.id === selectedSeasonId) ?? null;
+  const activeClasses = classes.filter((item) => !item.archived_at);
+  const academicYears = [...new Set(activeClasses.map((item) => item.academic_year))].sort((a, b) => b - a);
+  const visibleAcademicYear =
+    academicYear ?? selectedClass?.academic_year ?? academicYears[0] ?? currentAcademicYear();
+  const visibleClasses = activeClasses.filter((item) => item.academic_year === visibleAcademicYear);
+  const visibleSeasons = seasons.filter((item) => !item.archived_at);
   const visibleAssignments = editMode ? draftAssignments : assignments;
+  const selectedRoleAssignments = useMemo(
+    () => assignments.filter((item) => selectedRoleStudentIds.has(item.student_id)),
+    [assignments, selectedRoleStudentIds],
+  );
   const hasSeatingChanges = useMemo(() => {
     if (!editMode) return false;
     if (assignments.length !== draftAssignments.length) return true;
@@ -121,15 +146,17 @@ export default function DashboardClient({ email }: { email: string }) {
     const { data, error } = await supabase
       .from("classes")
       .select("*")
+      .order("academic_year", { ascending: false })
       .order("grade")
       .order("class_number");
     if (error) throw error;
     const list = (data ?? []) as Classroom[];
     setClasses(list);
+    const selectable = list.filter((item) => !item.archived_at);
     setSelectedClassId((current) => {
-      if (current && list.some((item) => item.id === current)) return current;
+      if (current && selectable.some((item) => item.id === current)) return current;
       const saved = window.localStorage.getItem("math-rpg-class-id");
-      return (saved && list.some((item) => item.id === saved) ? saved : list[0]?.id) ?? "";
+      return (saved && selectable.some((item) => item.id === saved) ? saved : selectable[0]?.id) ?? "";
     });
   }, [supabase]);
 
@@ -165,9 +192,10 @@ export default function DashboardClient({ email }: { email: string }) {
         setSession((sessionResult.data as ClassSession | null) ?? null);
         setTransactions((txResult.data ?? []) as MpTransaction[]);
 
+        const selectableSeasons = seasonList.filter((item) => !item.archived_at);
         setSelectedSeasonId((current) => {
-          if (current && seasonList.some((item) => item.id === current)) return current;
-          return seasonList.find((item) => item.is_active)?.id ?? seasonList[0]?.id ?? "";
+          if (current && selectableSeasons.some((item) => item.id === current)) return current;
+          return selectableSeasons.find((item) => item.is_active)?.id ?? selectableSeasons[0]?.id ?? "";
         });
       } finally {
         setLoading(false);
@@ -567,29 +595,36 @@ export default function DashboardClient({ email }: { email: string }) {
 
   async function createClass(payload: {
     name: string;
+    academicYear: number;
     grade: number;
     classNumber: number;
     seasonName: string;
     startDate: string;
     endDate: string;
+    copyStudentsFromClassId: string | null;
   }) {
     setBusy(true);
     try {
-      const { data, error } = await supabase.rpc("create_class_with_season", {
+      const { data, error } = await supabase.rpc("create_academic_class_with_season", {
         p_name: payload.name,
+        p_academic_year: payload.academicYear,
         p_grade: payload.grade,
         p_class_number: payload.classNumber,
         p_season_name: payload.seasonName,
         p_start_date: payload.startDate,
         p_end_date: payload.endDate || null,
+        p_copy_students_from_class_id: payload.copyStudentsFromClassId,
       });
       if (error) throw error;
       setModal(null);
       await loadClasses();
-      if (typeof data === "string") setSelectedClassId(data);
+      if (typeof data === "string") {
+        setAcademicYear(payload.academicYear);
+        setSelectedClassId(data);
+      }
       notify("학급을 생성했습니다.");
     } catch (error) {
-      notify(error instanceof Error ? error.message : "학급 생성에 실패했습니다.", "error");
+      notify(errorMessage(error, "학급 생성에 실패했습니다."), "error");
     } finally {
       setBusy(false);
     }
@@ -642,6 +677,136 @@ export default function DashboardClient({ email }: { email: string }) {
     }
   }
 
+  async function updateClassMetadata(
+    classroom: Classroom,
+    payload: { name: string; academicYear: number; grade: number; classNumber: number },
+  ) {
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("update_class_metadata", {
+        p_class_id: classroom.id,
+        p_name: payload.name,
+        p_academic_year: payload.academicYear,
+        p_grade: payload.grade,
+        p_class_number: payload.classNumber,
+      });
+      if (error) throw error;
+      await loadClasses();
+      setAcademicYear(payload.academicYear);
+      notify("학급 정보를 수정했습니다.");
+    } catch (error) {
+      notify(errorMessage(error, "학급 수정에 실패했습니다."), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setClassArchived(classroom: Classroom, archived: boolean) {
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("set_class_archived", {
+        p_class_id: classroom.id,
+        p_archived: archived,
+      });
+      if (error) throw error;
+      await loadClasses();
+      setAcademicYear(null);
+      notify(archived ? "학급을 보관했습니다." : "학급을 복구했습니다.");
+    } catch (error) {
+      notify(errorMessage(error, "학급 보관 상태 변경에 실패했습니다."), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteClassPermanently(classroom: Classroom) {
+    const confirmation = window.prompt(
+      `${classroom.academic_year}학년도 ${classroom.name}의 학생·시즌·수업·MP 기록을 모두 영구 삭제합니다.\n복구할 수 없습니다.\n\n계속하려면 학급 이름 '${classroom.name}'을 입력하세요.`,
+      "",
+    );
+    if (confirmation !== classroom.name) return;
+
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("delete_class_permanently", {
+        p_class_id: classroom.id,
+        p_confirm_name: confirmation,
+      });
+      if (error) throw error;
+      await loadClasses();
+      setAcademicYear(null);
+      notify("학급을 영구 삭제했습니다.");
+    } catch (error) {
+      notify(errorMessage(error, "학급 삭제에 실패했습니다."), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateSeasonMetadata(
+    seasonItem: Season,
+    payload: { name: string; startDate: string; endDate: string },
+  ) {
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("update_season_metadata", {
+        p_season_id: seasonItem.id,
+        p_name: payload.name,
+        p_start_date: payload.startDate,
+        p_end_date: payload.endDate || null,
+      });
+      if (error) throw error;
+      await loadClassData(seasonItem.class_id);
+      notify("운영 기간 정보를 수정했습니다.");
+    } catch (error) {
+      notify(errorMessage(error, "운영 기간 수정에 실패했습니다."), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setSeasonArchived(seasonItem: Season, archived: boolean) {
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("set_season_archived", {
+        p_season_id: seasonItem.id,
+        p_archived: archived,
+      });
+      if (error) throw error;
+      if (archived && selectedSeasonId === seasonItem.id) setSelectedSeasonId("");
+      await loadClassData(seasonItem.class_id);
+      notify(archived ? "운영 기간을 보관했습니다." : "운영 기간을 복구했습니다.");
+    } catch (error) {
+      notify(errorMessage(error, "운영 기간 보관 상태 변경에 실패했습니다."), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSeasonPermanently(seasonItem: Season) {
+    const confirmation = window.prompt(
+      `${seasonItem.name}의 배치·수업·MP 기록을 영구 삭제합니다.\n복구할 수 없습니다.\n\n계속하려면 운영 기간 이름 '${seasonItem.name}'을 입력하세요.`,
+      "",
+    );
+    if (confirmation !== seasonItem.name) return;
+
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("delete_season_permanently", {
+        p_season_id: seasonItem.id,
+        p_confirm_name: confirmation,
+      });
+      if (error) throw error;
+      if (selectedSeasonId === seasonItem.id) setSelectedSeasonId("");
+      await loadClassData(seasonItem.class_id);
+      notify("운영 기간을 영구 삭제했습니다.");
+    } catch (error) {
+      notify(errorMessage(error, "운영 기간 삭제에 실패했습니다."), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function updateRole(assignment: AssignmentWithStudent, role: Role, mentorStudentId: string | null) {
     const branchChanged = role !== assignment.role;
 
@@ -660,6 +825,55 @@ export default function DashboardClient({ email }: { email: string }) {
       notify("역할과 멘토 관계를 저장했습니다.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "역할 저장에 실패했습니다.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleRoleStudent(studentId: string) {
+    setSelectedRoleStudentIds((current) => {
+      const next = new Set(current);
+      if (next.has(studentId)) next.delete(studentId);
+      else next.add(studentId);
+      return next;
+    });
+  }
+
+  function addRoleStudents(predicate: (assignment: AssignmentWithStudent) => boolean) {
+    setSelectedRoleStudentIds((current) => {
+      const next = new Set(current);
+      assignments.filter(predicate).forEach((item) => next.add(item.student_id));
+      return next;
+    });
+  }
+
+  function exitRoleEditMode() {
+    setRoleEditMode(false);
+    setSelectedRoleStudentIds(new Set());
+  }
+
+  async function applyBulkRole(role: Role) {
+    if (!selectedSeasonId || selectedRoleAssignments.length === 0) return;
+
+    const roleLabel = ROLE_LABELS[role];
+    const confirmation = window.confirm(
+      `선택한 학생 ${selectedRoleAssignments.length}명의 역할을 '${roleLabel}'(으)로 변경할까요?\n역할이 실제로 바뀌는 학생은 승급 진행도가 새로 시작됩니다.`,
+    );
+    if (!confirmation) return;
+
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.rpc("bulk_update_assignment_roles", {
+        p_season_id: selectedSeasonId,
+        p_assignment_ids: selectedRoleAssignments.map((item) => item.id),
+        p_role: role,
+      });
+      if (error) throw error;
+      await refreshAll();
+      setSelectedRoleStudentIds(new Set());
+      notify(`${data ?? selectedRoleAssignments.length}명의 역할을 ${roleLabel}(으)로 변경했습니다.`);
+    } catch (error) {
+      notify(errorMessage(error, "역할 일괄 변경에 실패했습니다."), "error");
     } finally {
       setBusy(false);
     }
@@ -691,27 +905,44 @@ export default function DashboardClient({ email }: { email: string }) {
       </header>
 
       <main className="app-main">
-        {classes.length === 0 ? (
+        {activeClasses.length === 0 ? (
           <section className="empty-panel">
-            <h1>첫 학급을 만들어 볼까요?</h1>
-            <p>학급과 첫 모둠 운영 기간을 생성한 뒤 학생 명단을 등록합니다.</p>
+            <h1>{classes.length === 0 ? "첫 학급을 만들어 볼까요?" : "사용 중인 학급이 없습니다."}</h1>
+            <p>{classes.length === 0 ? "학급과 첫 모둠 운영 기간을 생성한 뒤 학생 명단을 등록합니다." : "새 학급을 만들거나 보관된 학급을 복구해 주세요."}</p>
             <button className="btn btn-primary" type="button" onClick={() => setModal("class")}>
               학급 만들기
             </button>
+            {classes.length > 0 && (
+              <button className="btn btn-ghost" style={{ marginLeft: 8 }} type="button" onClick={() => setModal("classManage")}>
+                보관 학급 관리
+              </button>
+            )}
           </section>
         ) : (
           <>
             <section className="toolbar">
               <div className="toolbar-group">
-                <select value={selectedClassId} onChange={(event) => setSelectedClassId(event.target.value)} disabled={editMode}>
-                  {classes.map((item) => (
+                <select
+                  aria-label="학년도"
+                  value={visibleAcademicYear}
+                  onChange={(event) => {
+                    const nextYear = Number(event.target.value);
+                    setAcademicYear(nextYear);
+                    setSelectedClassId(activeClasses.find((item) => item.academic_year === nextYear)?.id ?? "");
+                  }}
+                  disabled={editMode || roleEditMode}
+                >
+                  {academicYears.map((year) => <option key={year} value={year}>{year}학년도</option>)}
+                </select>
+                <select value={selectedClassId} onChange={(event) => setSelectedClassId(event.target.value)} disabled={editMode || roleEditMode}>
+                  {visibleClasses.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}
                     </option>
                   ))}
                 </select>
-                <select value={selectedSeasonId} onChange={(event) => setSelectedSeasonId(event.target.value)} disabled={editMode}>
-                  {seasons.map((item) => (
+                <select value={selectedSeasonId} onChange={(event) => setSelectedSeasonId(event.target.value)} disabled={editMode || roleEditMode}>
+                  {visibleSeasons.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}{item.is_active ? " · 현재" : ""}
                     </option>
@@ -723,7 +954,7 @@ export default function DashboardClient({ email }: { email: string }) {
 
               <div className="toolbar-group">
                 {!session ? (
-                  <button className="btn btn-success" type="button" onClick={startSession} disabled={busy || editMode || !selectedSeason}>
+                  <button className="btn btn-success" type="button" onClick={startSession} disabled={busy || editMode || roleEditMode || !selectedSeason}>
                     오늘 수업 시작
                   </button>
                 ) : (
@@ -749,7 +980,7 @@ export default function DashboardClient({ email }: { email: string }) {
                       setDraftAssignments(assignments.map((item) => ({ ...item, student: { ...item.student } })));
                       setEditMode(true);
                     }}
-                    disabled={Boolean(session)}
+                    disabled={Boolean(session) || roleEditMode}
                     title={session ? "수업을 종료한 뒤 배치를 수정해 주세요." : ""}
                   >
                     배치 수정
@@ -769,33 +1000,117 @@ export default function DashboardClient({ email }: { email: string }) {
                     </button>
                   </>
                 )}
-                <button className="btn btn-ghost" type="button" onClick={() => setModal("students")} disabled={editMode}>
+                {!roleEditMode ? (
+                  <button
+                    className="btn btn-soft"
+                    type="button"
+                    onClick={() => {
+                      setSelectedRoleStudentIds(new Set());
+                      setRoleEditMode(true);
+                    }}
+                    disabled={busy || editMode || Boolean(session) || !selectedSeason}
+                    title={session ? "수업을 종료한 뒤 역할을 변경해 주세요." : ""}
+                  >
+                    역할 일괄 설정
+                  </button>
+                ) : (
+                  <button className="btn btn-ghost" type="button" onClick={exitRoleEditMode} disabled={busy}>
+                    역할 설정 종료
+                  </button>
+                )}
+                <button className="btn btn-ghost" type="button" onClick={() => setModal("students")} disabled={editMode || roleEditMode}>
                   학생 명단
                 </button>
                 <button
                   className="btn btn-danger"
                   type="button"
                   onClick={resetClassMp}
-                  disabled={busy || editMode || Boolean(session) || !students.some((student) => student.total_mp !== 0)}
+                  disabled={busy || editMode || roleEditMode || Boolean(session) || !students.some((student) => student.total_mp !== 0)}
                   title={session ? "수업을 종료한 뒤 MP를 초기화해 주세요." : "현재 학급 학생들의 MP를 모두 0으로 초기화"}
                 >
                   MP 전체 초기화
                 </button>
-                <button className="btn btn-ghost" type="button" onClick={() => setModal("season")} disabled={editMode || Boolean(session)}>
+                <button className="btn btn-ghost" type="button" onClick={() => setModal("season")} disabled={editMode || roleEditMode || Boolean(session)}>
                   새 운영 기간
                 </button>
-                <button className="btn btn-ghost" type="button" onClick={() => setModal("class")} disabled={editMode}>
-                  학급 추가
+                <button className="btn btn-ghost" type="button" onClick={() => setModal("seasonManage")} disabled={editMode || roleEditMode || Boolean(session)}>
+                  운영 기간 관리
+                </button>
+                <button className="btn btn-ghost" type="button" onClick={() => setModal("class")} disabled={editMode || roleEditMode}>
+                  새 학년도·학급
+                </button>
+                <button className="btn btn-ghost" type="button" onClick={() => setModal("classManage")} disabled={editMode || roleEditMode || Boolean(session)}>
+                  학급 관리
                 </button>
               </div>
             </section>
+
+            {roleEditMode && selectedSeason && (
+              <section className="bulk-role-panel" aria-label="역할 일괄 설정">
+                <div className="bulk-role-heading">
+                  <div>
+                    <strong>역할 일괄 설정</strong>
+                    <p>학생 카드를 직접 누르거나 아래 조건 버튼으로 여러 명을 선택하세요.</p>
+                  </div>
+                  <span className="status-pill active">{selectedRoleAssignments.length}명 선택</span>
+                </div>
+
+                <div className="bulk-role-row">
+                  <span className="bulk-role-label">빠른 선택</span>
+                  <div className="bulk-role-buttons">
+                    <button className="btn btn-ghost btn-small" type="button" onClick={() => setSelectedRoleStudentIds(new Set(assignments.map((item) => item.student_id)))}>
+                      전체
+                    </button>
+                    <button className="btn btn-ghost btn-small" type="button" onClick={() => setSelectedRoleStudentIds(new Set())} disabled={selectedRoleAssignments.length === 0}>
+                      선택 해제
+                    </button>
+                    <button className="btn btn-ghost btn-small" type="button" onClick={() => addRoleStudents((item) => item.group_no === null || item.seat_index === null)}>
+                      미배치
+                    </button>
+                    {[1, 2, 3, 4].map((seatIndex) => (
+                      <button key={seatIndex} className="btn btn-ghost btn-small" type="button" onClick={() => addRoleStudents((item) => item.seat_index === seatIndex)}>
+                        {seatIndex}번 자리
+                      </button>
+                    ))}
+                    {[1, 2, 3, 4, 5, 6].map((groupNo) => (
+                      <button key={groupNo} className="btn btn-ghost btn-small" type="button" onClick={() => addRoleStudents((item) => item.group_no === groupNo)}>
+                        {groupNo}모둠
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bulk-role-row">
+                  <span className="bulk-role-label">역할 적용</span>
+                  <div className="bulk-role-buttons">
+                    {ROLE_ORDER.map((role) => (
+                      <button
+                        key={role}
+                        className={`btn btn-small bulk-role-apply role-${role}`}
+                        type="button"
+                        onClick={() => applyBulkRole(role)}
+                        disabled={busy || selectedRoleAssignments.length === 0}
+                      >
+                        {ROLE_LABELS[role]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            )}
 
             {selectedSeason ? (
               <SeatingBoard
                 assignments={visibleAssignments}
                 editable={editMode}
+                selectionMode={roleEditMode}
+                selectedStudentIds={selectedRoleStudentIds}
                 onPlanChange={handlePlanChange}
                 onStudentClick={(assignment) => {
+                  if (roleEditMode) {
+                    toggleRoleStudent(assignment.student_id);
+                    return;
+                  }
                   setSelectedAssignment(assignment);
                   setModal("student");
                 }}
@@ -845,7 +1160,30 @@ export default function DashboardClient({ email }: { email: string }) {
         )}
       </main>
 
-      {modal === "class" && <ClassModal busy={busy} onClose={() => setModal(null)} onSubmit={createClass} />}
+      {modal === "class" && (
+        <ClassModal
+          busy={busy}
+          classes={classes}
+          defaultAcademicYear={visibleAcademicYear}
+          onClose={() => setModal(null)}
+          onSubmit={createClass}
+        />
+      )}
+      {modal === "classManage" && (
+        <ClassManageModal
+          busy={busy}
+          classes={classes}
+          selectedClassId={selectedClassId}
+          onClose={() => setModal(null)}
+          onSelect={(classroom) => {
+            setAcademicYear(classroom.academic_year);
+            setSelectedClassId(classroom.id);
+          }}
+          onUpdate={updateClassMetadata}
+          onArchive={setClassArchived}
+          onDelete={deleteClassPermanently}
+        />
+      )}
       {modal === "students" && selectedClass && (
         <StudentsModal busy={busy} className={selectedClass.name} onClose={() => setModal(null)} onSubmit={addStudents} />
       )}
@@ -856,6 +1194,19 @@ export default function DashboardClient({ email }: { email: string }) {
           canCopy={Boolean(selectedSeasonId)}
           onClose={() => setModal(null)}
           onSubmit={createSeason}
+        />
+      )}
+      {modal === "seasonManage" && selectedClass && (
+        <SeasonManageModal
+          busy={busy}
+          className={selectedClass.name}
+          seasons={seasons}
+          selectedSeasonId={selectedSeasonId}
+          onClose={() => setModal(null)}
+          onSelect={setSelectedSeasonId}
+          onUpdate={updateSeasonMetadata}
+          onArchive={setSeasonArchived}
+          onDelete={deleteSeasonPermanently}
         />
       )}
       {modal === "student" && selectedAssignment && (
@@ -881,26 +1232,34 @@ export default function DashboardClient({ email }: { email: string }) {
 
 function ClassModal({
   busy,
+  classes,
+  defaultAcademicYear,
   onClose,
   onSubmit,
 }: {
   busy: boolean;
+  classes: Classroom[];
+  defaultAcademicYear: number;
   onClose: () => void;
   onSubmit: (payload: {
     name: string;
+    academicYear: number;
     grade: number;
     classNumber: number;
     seasonName: string;
     startDate: string;
     endDate: string;
+    copyStudentsFromClassId: string | null;
   }) => void;
 }) {
+  const [academicYear, setAcademicYear] = useState(defaultAcademicYear);
   const [grade, setGrade] = useState(1);
   const [classNumber, setClassNumber] = useState(1);
   const [name, setName] = useState("1학년 1반");
   const [seasonName, setSeasonName] = useState("1차 모둠 · 8~9월");
   const [startDate, setStartDate] = useState(todayIso());
   const [endDate, setEndDate] = useState("");
+  const [copyStudentsFromClassId, setCopyStudentsFromClassId] = useState("");
 
   return (
     <Modal title="학급 만들기" onClose={onClose}>
@@ -908,9 +1267,29 @@ function ClassModal({
         className="form-stack"
         onSubmit={(event) => {
           event.preventDefault();
-          onSubmit({ name, grade, classNumber, seasonName, startDate, endDate });
+          onSubmit({
+            name,
+            academicYear,
+            grade,
+            classNumber,
+            seasonName,
+            startDate,
+            endDate,
+            copyStudentsFromClassId: copyStudentsFromClassId || null,
+          });
         }}
       >
+        <div className="field">
+          <label>학년도</label>
+          <input
+            type="number"
+            min={2000}
+            max={2100}
+            value={academicYear}
+            onChange={(event) => setAcademicYear(Number(event.target.value))}
+            required
+          />
+        </div>
         <div className="two-columns">
           <div className="field">
             <label>학년</label>
@@ -941,6 +1320,18 @@ function ClassModal({
           </div>
         </div>
         <div className="field">
+          <label>이전 학급 학생 명단 복사(선택)</label>
+          <select value={copyStudentsFromClassId} onChange={(event) => setCopyStudentsFromClassId(event.target.value)}>
+            <option value="">복사하지 않음</option>
+            {classes.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.academic_year}학년도 · {item.name}{item.archived_at ? " · 보관됨" : ""}
+              </option>
+            ))}
+          </select>
+          <span className="quick-note">번호와 이름만 복사하며 MP는 0, 역할은 입문자, 좌석은 미배치로 시작합니다.</span>
+        </div>
+        <div className="field">
           <label>학급 표시 이름</label>
           <input value={name} onChange={(event) => setName(event.target.value)} required />
         </div>
@@ -963,6 +1354,114 @@ function ClassModal({
           <button className="btn btn-primary" type="submit" disabled={busy}>학급 생성</button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+function ClassManageModal({
+  busy,
+  classes,
+  selectedClassId,
+  onClose,
+  onSelect,
+  onUpdate,
+  onArchive,
+  onDelete,
+}: {
+  busy: boolean;
+  classes: Classroom[];
+  selectedClassId: string;
+  onClose: () => void;
+  onSelect: (classroom: Classroom) => void;
+  onUpdate: (classroom: Classroom, payload: { name: string; academicYear: number; grade: number; classNumber: number }) => void;
+  onArchive: (classroom: Classroom, archived: boolean) => void;
+  onDelete: (classroom: Classroom) => void;
+}) {
+  const initial = classes.find((item) => item.id === selectedClassId) ?? classes[0] ?? null;
+  const [selectedId, setSelectedId] = useState(initial?.id ?? "");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [academicYear, setAcademicYear] = useState(initial?.academic_year ?? currentAcademicYear());
+  const [grade, setGrade] = useState(initial?.grade ?? 1);
+  const [classNumber, setClassNumber] = useState(initial?.class_number ?? 1);
+  const selected = classes.find((item) => item.id === selectedId) ?? null;
+
+  function choose(item: Classroom) {
+    setSelectedId(item.id);
+    setName(item.name);
+    setAcademicYear(item.academic_year);
+    setGrade(item.grade);
+    setClassNumber(item.class_number);
+  }
+
+  return (
+    <Modal title="학급 관리" onClose={onClose} large>
+      <div className="management-layout">
+        <div className="management-list">
+          {classes.map((item) => (
+            <button
+              className={`management-item ${item.id === selectedId ? "selected" : ""}`}
+              key={item.id}
+              type="button"
+              onClick={() => choose(item)}
+            >
+              <strong>{item.academic_year}학년도 · {item.name}</strong>
+              <span>{item.archived_at ? "보관됨" : `${item.grade}학년 ${item.class_number}반`}</span>
+            </button>
+          ))}
+        </div>
+        {selected ? (
+          <div className="form-stack">
+            <div className="two-columns">
+              <div className="field">
+                <label>학년도</label>
+                <input type="number" min={2000} max={2100} value={academicYear} onChange={(event) => setAcademicYear(Number(event.target.value))} />
+              </div>
+              <div className="field">
+                <label>학급 표시 이름</label>
+                <input value={name} onChange={(event) => setName(event.target.value)} />
+              </div>
+            </div>
+            <div className="two-columns">
+              <div className="field">
+                <label>학년</label>
+                <select value={grade} onChange={(event) => setGrade(Number(event.target.value))}>
+                  {[1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </div>
+              <div className="field">
+                <label>반</label>
+                <input type="number" min={1} max={20} value={classNumber} onChange={(event) => setClassNumber(Number(event.target.value))} />
+              </div>
+            </div>
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={busy || !name}
+              onClick={() => onUpdate(selected, { name, academicYear, grade, classNumber })}
+            >
+              학급 정보 저장
+            </button>
+            <div className="warning-box">
+              보관은 기록을 유지한 채 기본 목록에서 숨깁니다. 영구 삭제는 학생·운영 기간·수업·MP 기록을 모두 삭제하며 복구할 수 없습니다.
+            </div>
+            <div className="modal-footer" style={{ marginTop: 0 }}>
+              {!selected.archived_at && (
+                <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => onSelect(selected)}>
+                  이 학급 열기
+                </button>
+              )}
+              <button className="btn btn-soft" type="button" disabled={busy} onClick={() => onArchive(selected, !selected.archived_at)}>
+                {selected.archived_at ? "학급 복구" : "학급 보관"}
+              </button>
+              <button className="btn btn-danger" type="button" disabled={busy} onClick={() => onDelete(selected)}>
+                영구 삭제
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="quick-note">관리할 학급이 없습니다.</p>
+        )}
+      </div>
     </Modal>
   );
 }
@@ -1050,6 +1549,106 @@ function SeasonModal({
             운영 기간 생성
           </button>
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+function SeasonManageModal({
+  busy,
+  className,
+  seasons,
+  selectedSeasonId,
+  onClose,
+  onSelect,
+  onUpdate,
+  onArchive,
+  onDelete,
+}: {
+  busy: boolean;
+  className: string;
+  seasons: Season[];
+  selectedSeasonId: string;
+  onClose: () => void;
+  onSelect: (seasonId: string) => void;
+  onUpdate: (season: Season, payload: { name: string; startDate: string; endDate: string }) => void;
+  onArchive: (season: Season, archived: boolean) => void;
+  onDelete: (season: Season) => void;
+}) {
+  const initial = seasons.find((item) => item.id === selectedSeasonId) ?? seasons[0] ?? null;
+  const [selectedId, setSelectedId] = useState(initial?.id ?? "");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [startDate, setStartDate] = useState(initial?.start_date ?? todayIso());
+  const [endDate, setEndDate] = useState(initial?.end_date ?? "");
+  const selected = seasons.find((item) => item.id === selectedId) ?? null;
+
+  function choose(item: Season) {
+    setSelectedId(item.id);
+    setName(item.name);
+    setStartDate(item.start_date);
+    setEndDate(item.end_date ?? "");
+  }
+
+  return (
+    <Modal title={`${className} 운영 기간 관리`} onClose={onClose} large>
+      <div className="management-layout">
+        <div className="management-list">
+          {seasons.map((item) => (
+            <button
+              className={`management-item ${item.id === selectedId ? "selected" : ""}`}
+              key={item.id}
+              type="button"
+              onClick={() => choose(item)}
+            >
+              <strong>{item.name}</strong>
+              <span>{item.archived_at ? "보관됨" : item.is_active ? "현재 운영 기간" : `${item.start_date} 시작`}</span>
+            </button>
+          ))}
+        </div>
+        {selected ? (
+          <div className="form-stack">
+            <div className="field">
+              <label>운영 기간 이름</label>
+              <input value={name} onChange={(event) => setName(event.target.value)} />
+            </div>
+            <div className="two-columns">
+              <div className="field">
+                <label>시작일</label>
+                <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+              </div>
+              <div className="field">
+                <label>종료일(선택)</label>
+                <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+              </div>
+            </div>
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={busy || !name || !startDate}
+              onClick={() => onUpdate(selected, { name, startDate, endDate })}
+            >
+              운영 기간 정보 저장
+            </button>
+            <div className="warning-box">
+              보관은 배치와 MP 기록을 유지합니다. 영구 삭제는 해당 기간의 배치·수업·MP 기록을 삭제하며 복구할 수 없습니다.
+            </div>
+            <div className="modal-footer" style={{ marginTop: 0 }}>
+              {!selected.archived_at && (
+                <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => onSelect(selected.id)}>
+                  이 기간 열기
+                </button>
+              )}
+              <button className="btn btn-soft" type="button" disabled={busy} onClick={() => onArchive(selected, !selected.archived_at)}>
+                {selected.archived_at ? "기간 복구" : "기간 보관"}
+              </button>
+              <button className="btn btn-danger" type="button" disabled={busy} onClick={() => onDelete(selected)}>
+                영구 삭제
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="quick-note">관리할 운영 기간이 없습니다.</p>
+        )}
       </div>
     </Modal>
   );

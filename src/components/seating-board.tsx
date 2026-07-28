@@ -39,12 +39,16 @@ function Seat({
   seatIndex,
   assignment,
   editable,
+  selectionMode,
+  selectedStudentIds,
   onStudentClick,
 }: {
   groupNo: number;
   seatIndex: number;
   assignment?: AssignmentWithStudent;
   editable: boolean;
+  selectionMode: boolean;
+  selectedStudentIds: Set<string>;
   onStudentClick: (assignment: AssignmentWithStudent) => void;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: seatId(groupNo, seatIndex), disabled: !editable });
@@ -52,7 +56,12 @@ function Seat({
     <div ref={setNodeRef} className={`seat-slot ${isOver ? "over" : ""} ${!assignment ? "empty" : ""}`}>
       <span className="seat-position" aria-label={`${seatIndex}번 자리`}>{seatIndex}</span>
       {assignment ? (
-        <StudentCard assignment={assignment} editable={editable} onClick={() => onStudentClick(assignment)} />
+        <StudentCard
+          assignment={assignment}
+          editable={editable}
+          selected={selectionMode ? selectedStudentIds.has(assignment.student_id) : undefined}
+          onClick={() => onStudentClick(assignment)}
+        />
       ) : (
         <span>{editable ? "여기에 놓기" : "빈자리"}</span>
       )}
@@ -63,10 +72,14 @@ function Seat({
 function UnassignedZone({
   assignments,
   editable,
+  selectionMode,
+  selectedStudentIds,
   onStudentClick,
 }: {
   assignments: AssignmentWithStudent[];
   editable: boolean;
+  selectionMode: boolean;
+  selectedStudentIds: Set<string>;
   onStudentClick: (assignment: AssignmentWithStudent) => void;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: "unassigned", disabled: !editable });
@@ -80,6 +93,7 @@ function UnassignedZone({
             key={assignment.id}
             assignment={assignment}
             editable={editable}
+            selected={selectionMode ? selectedStudentIds.has(assignment.student_id) : undefined}
             onClick={() => onStudentClick(assignment)}
           />
         ))
@@ -91,6 +105,8 @@ function UnassignedZone({
 export default function SeatingBoard({
   assignments,
   editable,
+  selectionMode = false,
+  selectedStudentIds = new Set<string>(),
   onPlanChange,
   onStudentClick,
   onGroupAward,
@@ -98,6 +114,8 @@ export default function SeatingBoard({
 }: {
   assignments: AssignmentWithStudent[];
   editable: boolean;
+  selectionMode?: boolean;
+  selectedStudentIds?: Set<string>;
   onPlanChange: (studentId: string, position: SeatPosition, swapStudentId?: string) => void;
   onStudentClick: (assignment: AssignmentWithStudent) => void;
   onGroupAward: (groupNo: number, amount: number) => void;
@@ -190,6 +208,8 @@ export default function SeatingBoard({
                       seatIndex={seatIndex}
                       assignment={positionMap.get(seatId(groupNo, seatIndex))}
                       editable={editable}
+                      selectionMode={selectionMode}
+                      selectedStudentIds={selectedStudentIds}
                       onStudentClick={onStudentClick}
                     />
                   ))}
@@ -205,7 +225,13 @@ export default function SeatingBoard({
               <h3>미배치 학생</h3>
               <span className="status-pill">{unassigned.length}명</span>
             </div>
-            <UnassignedZone assignments={unassigned} editable={editable} onStudentClick={onStudentClick} />
+            <UnassignedZone
+              assignments={unassigned}
+              editable={editable}
+              selectionMode={selectionMode}
+              selectedStudentIds={selectedStudentIds}
+              onStudentClick={onStudentClick}
+            />
           </div>
           <div className="side-section">
             <h3>배치 안내</h3>
