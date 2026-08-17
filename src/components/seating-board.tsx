@@ -16,9 +16,9 @@ import { useMemo, useState } from "react";
 import type { AssignmentWithStudent, SeatPosition } from "@/types/app";
 import { StudentCard } from "@/components/student-card";
 
-const GROUPS = [1, 2, 3, 4, 5, 6];
+const GROUPS = [6, 5, 4, 3, 2, 1];
 // 실제 모둠 책상 배치: 위쪽 2·3번, 아래쪽 4·1번
-const SEATS = [2, 3, 4, 1];
+const SEATS = [1, 4, 3, 2];
 
 function seatId(groupNo: number, seatIndex: number) {
   return `seat:${groupNo}:${seatIndex}`;
