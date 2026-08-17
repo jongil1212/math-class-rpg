@@ -16,8 +16,9 @@ import { useMemo, useState } from "react";
 import type { AssignmentWithStudent, SeatPosition } from "@/types/app";
 import { StudentCard } from "@/components/student-card";
 
+// 교사가 교탁 뒤에서 교실을 바라보는 시점
 const GROUPS = [6, 5, 4, 3, 2, 1];
-// 실제 모둠 책상 배치: 위쪽 2·3번, 아래쪽 4·1번
+// 위쪽 1·4번, 아래쪽 3·2번
 const SEATS = [1, 4, 3, 2];
 
 function seatId(groupNo: number, seatIndex: number) {
@@ -169,13 +170,12 @@ export default function SeatingBoard({
       onDragEnd={handleDragEnd}
     >
       <div className="layout-grid">
-        <section className="board-card">
+        <section className="board-card seating-board-card">
           {editable && (
             <div className="edit-mode-notice" role="status">
               배치 수정 중 · 저장하기 전까지 데이터베이스에는 반영되지 않습니다.
             </div>
           )}
-          <div className="teacher-desk">교탁</div>
           <div className="groups-grid">
             {GROUPS.map((groupNo) => (
               <article className="group-card" key={groupNo}>
@@ -217,6 +217,7 @@ export default function SeatingBoard({
               </article>
             ))}
           </div>
+          <div className="teacher-desk">교탁</div>
         </section>
 
         <aside className="side-card">

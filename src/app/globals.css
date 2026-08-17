@@ -234,7 +234,7 @@ h1, h2, h3, p { margin-top: 0; }
 
 .teacher-desk {
   width: min(340px, 56%);
-  margin: 0 auto 18px;
+  margin: 18px auto 0;
   padding: 13px;
   text-align: center;
   font-size: 23px;
@@ -247,6 +247,14 @@ h1, h2, h3, p { margin-top: 0; }
   border: 2px solid #f4c65f;
   box-shadow: 0 10px 26px rgba(8,26,60,.25);
 }
+
+.seating-board-card {
+  display: flex;
+  flex-direction: column;
+}
+.seating-board-card .edit-mode-notice { order: 0; }
+.seating-board-card .groups-grid { order: 1; }
+.seating-board-card .teacher-desk { order: 2; }
 
 .groups-grid {
   display: grid;
