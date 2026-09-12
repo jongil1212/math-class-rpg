@@ -53,6 +53,8 @@ export type Assignment = {
   updated_at: string;
 };
 
+export type FeverSource = "guardian" | "teacher";
+
 export type ClassSession = {
   id: string;
   owner_id: string;
@@ -64,6 +66,7 @@ export type ClassSession = {
   status: "active" | "ended";
   fever_started_at: string | null;
   fever_ended_at: string | null;
+  fever_source: FeverSource | null;
   created_at: string;
 };
 

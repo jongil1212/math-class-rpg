@@ -12,6 +12,7 @@ import {
   type AssignmentWithStudent,
   type Classroom,
   type ClassSession,
+  type FeverSource,
   type MpTransaction,
   type Role,
   type Season,
@@ -21,6 +22,11 @@ import {
 
 type Toast = { message: string; kind: "success" | "error" } | null;
 type ModalName = "class" | "classManage" | "students" | "season" | "seasonManage" | "student" | null;
+
+const FEVER_SOURCE_LABELS: Record<FeverSource, string> = {
+  guardian: "수호자 요청",
+  teacher: "교사 선언",
+};
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -369,33 +375,42 @@ export default function DashboardClient({ email }: { email: string }) {
     }
   }
 
-  async function startFever() {
-    if (!session) return;
-    if (!assignments.some((item) => item.role === "guardian")) {
-      notify("현재 배치에 수호자가 없습니다.", "error");
+  async function startFever(source: FeverSource) {
+    if (!session || busy || activeFever) return;
+    if (source === "guardian" && selectedSeasonId === session.season_id && !assignments.some((item) => item.role === "guardian")) {
+      notify("이 수업에 수호자가 없습니다. 교사 선언 피버를 사용해 주세요.", "error");
       return;
     }
-    if (!window.confirm("피버 타임을 시작할까요? 10분 동안 모든 MP가 2배로 계산됩니다.")) return;
+    const sourceLabel = FEVER_SOURCE_LABELS[source];
+    const usageNote = source === "guardian"
+      ? "수호자 요청은 학급당 주 1회 사용할 수 있습니다."
+      : "수호자가 없어도 사용할 수 있으며, 수호자의 주 1회 사용 횟수에는 포함되지 않습니다.";
+    if (!window.confirm(`${sourceLabel}으로 피버 타임을 시작할까요?\n10분 동안 모든 MP가 2배로 계산됩니다.\n${usageNote}`)) return;
     setBusy(true);
     try {
-      const { error } = await supabase.rpc("start_fever_time", { p_session_id: session.id });
+      const { error } = await supabase.rpc("start_fever_time", { p_session_id: session.id, p_source: source });
       if (error) throw error;
       await refreshAll();
-      notify("피버 타임을 시작했습니다!");
+      notify(`${sourceLabel} 피버 타임을 시작했습니다!`);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "피버 타임을 시작하지 못했습니다.", "error");
+      notify(errorMessage(error, "피버 타임을 시작하지 못했습니다."), "error");
     } finally {
       setBusy(false);
     }
   }
 
   async function stopFever() {
-    if (!session) return;
-    const { error } = await supabase.rpc("stop_fever_time", { p_session_id: session.id });
-    if (error) notify(error.message, "error");
-    else {
+    if (!session || busy) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("stop_fever_time", { p_session_id: session.id });
+      if (error) throw error;
       await refreshAll();
       notify("피버 타임을 종료했습니다.");
+    } catch (error) {
+      notify(errorMessage(error, "피버 타임을 종료하지 못했습니다."), "error");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -949,7 +964,7 @@ export default function DashboardClient({ email }: { email: string }) {
                   ))}
                 </select>
                 <span className={`status-pill ${session ? "active" : ""}`}>{session ? "수업 진행 중" : "수업 대기"}</span>
-                {feverText && <span className="status-pill fever">🔥 피버 {feverText}</span>}
+                {feverText && <span className="status-pill fever">🔥 {FEVER_SOURCE_LABELS[session?.fever_source ?? "guardian"]} 피버 {feverText}</span>}
               </div>
 
               <div className="toolbar-group">
@@ -963,9 +978,14 @@ export default function DashboardClient({ email }: { email: string }) {
                   </button>
                 )}
                 {session && !activeFever && (
-                  <button className="btn btn-gold" type="button" onClick={startFever} disabled={busy || editMode}>
-                    피버 타임
-                  </button>
+                  <>
+                    <button className="btn btn-gold" type="button" onClick={() => startFever("guardian")} disabled={busy || editMode || roleEditMode} title="수호자 요청 · 학급당 주 1회, 10분간 MP 2배">
+                      수호자 요청 피버
+                    </button>
+                    <button className="btn btn-gold" type="button" onClick={() => startFever("teacher")} disabled={busy || editMode || roleEditMode} title="교사 선언 · 수호자 없이도 10분간 MP 2배">
+                      교사 선언 피버
+                    </button>
+                  </>
                 )}
                 {activeFever && (
                   <button className="btn btn-ghost" type="button" onClick={stopFever} disabled={busy}>
@@ -1737,7 +1757,7 @@ function StudentModal({
             )}
             {assignment.role === "guardian" && (
               <div className="action-card" style={{ opacity: .65 }}>
-                <strong>피버 타임</strong><span>화면 상단의 피버 타임 버튼에서 실행</span>
+                <strong>피버 타임</strong><span>학급당 주 1회 · 화면 상단의 수호자 요청 피버 버튼에서 실행</span>
               </div>
             )}
           </div>
