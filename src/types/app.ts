@@ -1,8 +1,10 @@
 export type Role =
   | "beginner"
   | "disciple"
+  | "senior_disciple"
   | "mentor"
   | "senior_mentor"
+  | "math_saint"
   | "guardian";
 
 export type Classroom = {
@@ -35,6 +37,8 @@ export type Season = {
   start_date: string;
   end_date: string | null;
   is_active: boolean;
+  rules_version: 1 | 2;
+  shop_open: boolean;
   archived_at: string | null;
   created_at: string;
 };
@@ -89,6 +93,7 @@ export type MpTransaction = {
 
 export type AssignmentWithStudent = Assignment & {
   student: Student;
+  rules_version?: 1 | 2;
 };
 
 export type SeatPosition = {
@@ -99,15 +104,19 @@ export type SeatPosition = {
 export const ROLE_LABELS: Record<Role, string> = {
   beginner: "입문자",
   disciple: "수제자",
+  senior_disciple: "상급 수제자",
   mentor: "수승님",
   senior_mentor: "상급 수승님",
+  math_saint: "수학의 성인",
   guardian: "수호자",
 };
 
 export const ROLE_ORDER: Role[] = [
   "beginner",
   "disciple",
+  "senior_disciple",
   "mentor",
   "senior_mentor",
+  "math_saint",
   "guardian",
 ];

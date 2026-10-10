@@ -9,9 +9,10 @@ export type SkillAction = {
   usageOnly?: boolean;
   pairedAward?: boolean;
   passive?: boolean;
+  seasonTwo?: boolean;
 };
 
-export const SKILLS_BY_ROLE: Record<Role, SkillAction[]> = {
+const BASE_SKILLS: Record<Exclude<Role, "senior_disciple" | "math_saint">, SkillAction[]> = {
   beginner: [
     {
       key: "beginner_luck",
@@ -89,5 +90,20 @@ export const SKILLS_BY_ROLE: Record<Role, SkillAction[]> = {
       description: "발표 일부 성공 시 +1MP · 3·4번 자리에서는 수승의 은혜 발동",
       baseAmount: 1,
     },
+  ],
+};
+
+export const SKILLS_BY_ROLE: Record<Role, SkillAction[]> = {
+  ...BASE_SKILLS,
+  senior_disciple: [...BASE_SKILLS.disciple,
+    { key: "duo_casting", label: "듀오 캐스팅", description: "같은 모둠 학생 1명을 추가 발표자로 지정 · 수업당 1회", seasonTwo: true },
+    { key: "absorption_strike", label: "흡수의 일격", description: "완벽한 발표 성공 후 다른 모둠 수승님의 MP 1점 강탈 · 수업당 1회", seasonTwo: true },
+  ],
+  math_saint: [...BASE_SKILLS.senior_mentor,
+    { key: "turning_fortune", label: "전화위복", description: "공격으로 MP를 잃으면 다음 활동 발표 최우선권 자동 획득", passive: true, seasonTwo: true },
+    { key: "presentation_steal", label: "강탈", description: "다른 학생의 발표 기회를 가져오기 · 수업당 1회", seasonTwo: true },
+  ],
+  guardian: [...BASE_SKILLS.guardian,
+    { key: "guardian_blessing", label: "수호자의 가호", description: "우리 모둠에 대한 다음 공격 1회 방어 · 수업당 1회", seasonTwo: true },
   ],
 };

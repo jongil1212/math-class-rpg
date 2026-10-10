@@ -4,11 +4,11 @@ import { CSS } from "@dnd-kit/utilities";
 import { useDraggable } from "@dnd-kit/core";
 import type { AssignmentWithStudent } from "@/types/app";
 import { ROLE_LABELS } from "@/types/app";
+import { promotion } from "@/lib/season-two";
 
 function progressText(assignment: AssignmentWithStudent) {
-  if (!['beginner', 'mentor'].includes(assignment.role)) return null;
-  const progress = assignment.student.total_mp - assignment.role_started_mp;
-  return progress >= 20 ? "승급 가능" : `${Math.max(0, progress)}/20`;
+  const next = promotion(assignment);
+  return next ? next.eligible ? "승급 가능" : `${Math.max(0, next.progress)}/${next.threshold}` : null;
 }
 
 export function StudentCard({

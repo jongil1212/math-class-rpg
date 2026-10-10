@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import SeatingBoard from "@/components/seating-board";
+import { SeasonTwoPanel, SeasonTwoSkillActions } from "@/components/season-two-panel";
+import { promotion } from "@/lib/season-two";
 import { createClient } from "@/lib/supabase/browser";
 import { SKILLS_BY_ROLE, type SkillAction } from "@/lib/skills";
 import {
@@ -42,10 +44,6 @@ function errorMessage(error: unknown, fallback: string) {
     return error.message;
   }
   return fallback;
-}
-
-function roleProgress(assignment: AssignmentWithStudent) {
-  return assignment.student.total_mp - assignment.role_started_mp;
 }
 
 function formatTime(value: string) {
@@ -99,6 +97,7 @@ export default function DashboardClient({ email }: { email: string }) {
   const [selectedAssignment, setSelectedAssignment] = useState<AssignmentWithStudent | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [revision, setRevision] = useState(0);
 
   const selectedClass = classes.find((item) => item.id === selectedClassId) ?? null;
   const selectedSeason = seasons.find((item) => item.id === selectedSeasonId) ?? null;
@@ -221,16 +220,16 @@ export default function DashboardClient({ email }: { email: string }) {
       if (error) throw error;
       const studentMap = new Map(studentList.map((student) => [student.id, student]));
       const joined = ((data ?? []) as Assignment[])
-        .map((assignment) => {
+        .map((assignment): AssignmentWithStudent | null => {
           const student = studentMap.get(assignment.student_id);
-          return student ? ({ ...assignment, student } satisfies AssignmentWithStudent) : null;
+          return student ? ({ ...assignment, student, rules_version: seasons.find((s) => s.id === seasonId)?.rules_version ?? 1 } satisfies AssignmentWithStudent) : null;
         })
         .filter((item): item is AssignmentWithStudent => Boolean(item))
         .sort((a, b) => a.student.student_number - b.student.student_number);
       setAssignments(joined);
       setDraftAssignments(joined.map((item) => ({ ...item, student: { ...item.student } })));
     },
-    [students, supabase],
+    [students, supabase, seasons],
   );
 
   async function refreshAll() {
@@ -258,6 +257,7 @@ export default function DashboardClient({ email }: { email: string }) {
     setSession((sessionResult.data as ClassSession | null) ?? null);
     setTransactions((txResult.data ?? []) as MpTransaction[]);
     setSeasons((seasonResult.data ?? []) as Season[]);
+    setRevision((current) => current + 1);
   }
 
   useEffect(() => {
@@ -492,6 +492,7 @@ export default function DashboardClient({ email }: { email: string }) {
       });
       if (error) throw error;
       notify(`${skill.label} 사용을 기록했습니다.`);
+      await refreshAll();
     } catch (error) {
       notify(error instanceof Error ? error.message : "스킬 기록에 실패했습니다.", "error");
     } finally {
@@ -521,7 +522,7 @@ export default function DashboardClient({ email }: { email: string }) {
 
     if (skill.pairedAward) {
       const disciples = assignments.filter(
-        (item) => item.mentor_student_id === assignment.student_id && ["beginner", "disciple"].includes(item.role),
+        (item) => item.mentor_student_id === assignment.student_id && ["beginner", "disciple", "senior_disciple"].includes(item.role),
       );
       if (disciples.length === 0) {
         notify("이 수승님에게 연결된 입문자·수제자가 없습니다.", "error");
@@ -534,8 +535,16 @@ export default function DashboardClient({ email }: { email: string }) {
               window.confirm(`${item.student.name} 학생에게 구원투수 MP를 함께 지급할까요?`),
             );
       if (!target) return;
-      await awardStudent(assignment, 1, "구원투수", skill.key, 1);
-      await awardStudent(target, 1, "구원투수 도움받음", "relief_pitcher_helped", 1);
+      if (!session) return;
+      setBusy(true);
+      try {
+        const { error } = await supabase.rpc("use_relief_pitcher", {
+          p_student_id: assignment.student_id, p_target_id: target.student_id, p_session_id: session.id,
+        });
+        if (error) throw error;
+        await refreshAll(); notify("구원투수 MP를 함께 지급했습니다.");
+      } catch (error) { notify(errorMessage(error, "구원투수 사용에 실패했습니다."), "error"); }
+      finally { setBusy(false); }
       return;
     }
 
@@ -592,7 +601,8 @@ export default function DashboardClient({ email }: { email: string }) {
   }
 
   async function promote(assignment: AssignmentWithStudent) {
-    if (!window.confirm(`${assignment.student.name} 학생을 ${assignment.role === "beginner" ? "수제자" : "상급 수승님"}로 승급할까요?`)) return;
+    const next = promotion(assignment);
+    if (!next?.eligible || !window.confirm(`${assignment.student.name} 학생을 ${ROLE_LABELS[next.role]}(으)로 승급할까요?`)) return;
     setBusy(true);
     try {
       const { error } = await supabase.rpc("promote_student", { p_assignment_id: assignment.id });
@@ -669,16 +679,17 @@ export default function DashboardClient({ email }: { email: string }) {
     }
   }
 
-  async function createSeason(payload: { name: string; startDate: string; endDate: string; copy: boolean }) {
+  async function createSeason(payload: { name: string; startDate: string; endDate: string; copy: boolean; rulesVersion: number }) {
     if (!selectedClassId) return;
     setBusy(true);
     try {
-      const { data, error } = await supabase.rpc("create_season", {
+      const { data, error } = await supabase.rpc("create_season_v2", {
         p_class_id: selectedClassId,
         p_name: payload.name,
         p_start_date: payload.startDate,
         p_end_date: payload.endDate || null,
         p_copy_from_season_id: payload.copy ? selectedSeasonId || null : null,
+        p_rules_version: payload.rulesVersion,
       });
       if (error) throw error;
       setModal(null);
@@ -872,7 +883,7 @@ export default function DashboardClient({ email }: { email: string }) {
 
     const roleLabel = ROLE_LABELS[role];
     const confirmation = window.confirm(
-      `선택한 학생 ${selectedRoleAssignments.length}명의 역할을 '${roleLabel}'(으)로 변경할까요?\n역할이 실제로 바뀌는 학생은 승급 진행도가 새로 시작됩니다.`,
+      `선택한 학생 ${selectedRoleAssignments.length}명의 역할을 '${roleLabel}'(으)로 변경할까요?\n${selectedSeason?.rules_version === 2 ? "시즌 2는 누적 MP로 성장하며 구매 시 고정된 상점 기준은 유지됩니다." : "역할이 실제로 바뀌는 학생은 승급 진행도가 새로 시작됩니다."}`,
     );
     if (!confirmation) return;
 
@@ -959,7 +970,7 @@ export default function DashboardClient({ email }: { email: string }) {
                 <select value={selectedSeasonId} onChange={(event) => setSelectedSeasonId(event.target.value)} disabled={editMode || roleEditMode}>
                   {visibleSeasons.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.name}{item.is_active ? " · 현재" : ""}
+                      {item.name}{item.rules_version === 2 ? " · 시즌 2 규칙" : ""}{item.is_active ? " · 현재" : ""}
                     </option>
                   ))}
                 </select>
@@ -969,7 +980,7 @@ export default function DashboardClient({ email }: { email: string }) {
 
               <div className="toolbar-group">
                 {!session ? (
-                  <button className="btn btn-success" type="button" onClick={startSession} disabled={busy || editMode || roleEditMode || !selectedSeason}>
+                  <button className="btn btn-success" type="button" onClick={startSession} disabled={busy || editMode || roleEditMode || !selectedSeason?.is_active}>
                     오늘 수업 시작
                   </button>
                 ) : (
@@ -1103,7 +1114,7 @@ export default function DashboardClient({ email }: { email: string }) {
                 <div className="bulk-role-row">
                   <span className="bulk-role-label">역할 적용</span>
                   <div className="bulk-role-buttons">
-                    {ROLE_ORDER.map((role) => (
+                    {ROLE_ORDER.filter((role) => selectedSeason.rules_version === 2 || !["senior_disciple", "math_saint"].includes(role)).map((role) => (
                       <button
                         key={role}
                         className={`btn btn-small bulk-role-apply role-${role}`}
@@ -1135,7 +1146,7 @@ export default function DashboardClient({ email }: { email: string }) {
                   setModal("student");
                 }}
                 onGroupAward={awardGroup}
-                sessionActive={Boolean(session)}
+                sessionActive={Boolean(session && session.season_id === selectedSeasonId)}
               />
             ) : (
               <section className="empty-panel">
@@ -1144,6 +1155,11 @@ export default function DashboardClient({ email }: { email: string }) {
                   운영 기간 만들기
                 </button>
               </section>
+            )}
+
+            {selectedSeason?.rules_version === 2 && (
+              <SeasonTwoPanel key={selectedSeason.id} season={selectedSeason} assignments={assignments}
+                session={session} revision={revision} onChange={refreshAll} />
             )}
 
             <section className="board-card" style={{ marginTop: 16 }}>
@@ -1165,7 +1181,7 @@ export default function DashboardClient({ email }: { email: string }) {
                       </div>
                       <div className="recent-row">
                         <span>{tx.reason} · {formatTime(tx.created_at)}</span>
-                        {tx.amount > 0 && !tx.is_reversed && (
+                        {tx.amount > 0 && !tx.is_reversed && tx.skill_key !== "absorption_strike" && (
                           <button className="btn btn-ghost btn-small" type="button" onClick={() => reverseTransaction(tx)} disabled={busy}>
                             취소
                           </button>
@@ -1232,7 +1248,11 @@ export default function DashboardClient({ email }: { email: string }) {
       {modal === "student" && selectedAssignment && (
         <StudentModal
           assignment={assignments.find((item) => item.id === selectedAssignment.id) ?? selectedAssignment}
-          sessionActive={Boolean(session)}
+          sessionActive={Boolean(session && session.season_id === selectedSeasonId)}
+          session={session?.season_id === selectedSeasonId ? session : null}
+          assignments={assignments}
+          revision={revision}
+          onChange={refreshAll}
           busy={busy}
           onClose={() => {
             setModal(null);
@@ -1534,12 +1554,13 @@ function SeasonModal({
   className: string;
   canCopy: boolean;
   onClose: () => void;
-  onSubmit: (payload: { name: string; startDate: string; endDate: string; copy: boolean }) => void;
+  onSubmit: (payload: { name: string; startDate: string; endDate: string; copy: boolean; rulesVersion: number }) => void;
 }) {
   const [name, setName] = useState("2차 모둠 · 중간고사 이후");
   const [startDate, setStartDate] = useState(todayIso());
   const [endDate, setEndDate] = useState("");
   const [copy, setCopy] = useState(canCopy);
+  const [rulesVersion, setRulesVersion] = useState(2);
 
   return (
     <Modal title={`${className} 새 운영 기간`} onClose={onClose}>
@@ -1558,14 +1579,21 @@ function SeasonModal({
             <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
           </div>
         </div>
+        <div className="field">
+          <label>성장·스킬 운영 규칙</label>
+          <select value={rulesVersion} onChange={(event) => setRulesVersion(Number(event.target.value))}>
+            <option value={2}>시즌 2 · 누적 40MP 승급 / 새 스킬 / MP 상점</option>
+            <option value={1}>시즌 1 · 기존 규칙</option>
+          </select>
+        </div>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800 }}>
           <input type="checkbox" checked={copy} disabled={!canCopy} onChange={(event) => setCopy(event.target.checked)} />
           현재 배치·역할을 복사해서 시작
         </label>
-        <div className="warning-box">새 운영 기간을 만들면 기존 운영 기간은 과거 기록으로 보존되고 새 기간이 현재 기간이 됩니다.</div>
+        <div className="warning-box">새 기간을 만들어도 기존 MP는 초기화되지 않습니다. 배치·역할을 복사하면 35MP인 수제자는 5MP를 더 얻어 상급 수제자로 승급할 수 있습니다. 기존 기간은 과거 기록으로 보존됩니다.</div>
         <div className="modal-footer">
           <button className="btn btn-ghost" type="button" onClick={onClose}>취소</button>
-          <button className="btn btn-primary" type="button" disabled={busy || !name || !startDate} onClick={() => onSubmit({ name, startDate, endDate, copy })}>
+          <button className="btn btn-primary" type="button" disabled={busy || !name || !startDate} onClick={() => onSubmit({ name, startDate, endDate, copy, rulesVersion })}>
             운영 기간 생성
           </button>
         </div>
@@ -1677,6 +1705,10 @@ function SeasonManageModal({
 function StudentModal({
   assignment,
   sessionActive,
+  session,
+  assignments,
+  revision,
+  onChange,
   busy,
   onClose,
   onAward,
@@ -1686,6 +1718,10 @@ function StudentModal({
 }: {
   assignment: AssignmentWithStudent;
   sessionActive: boolean;
+  session: ClassSession | null;
+  assignments: AssignmentWithStudent[];
+  revision: number;
+  onChange: () => Promise<void>;
   busy: boolean;
   onClose: () => void;
   onAward: (
@@ -1701,8 +1737,24 @@ function StudentModal({
 }) {
   const [role, setRole] = useState<Role>(assignment.role);
   const [customMp, setCustomMp] = useState(1);
-  const eligiblePromotion = ["beginner", "mentor"].includes(assignment.role) && roleProgress(assignment) >= 20;
-  const skills = SKILLS_BY_ROLE[assignment.role];
+  const nextPromotion = promotion(assignment);
+  const version2 = assignment.rules_version === 2;
+  const skills = SKILLS_BY_ROLE[assignment.role].filter((skill) => version2 || !skill.seasonTwo);
+  const supabase = useMemo(() => createClient(), []);
+  const [usedKeys, setUsedKeys] = useState<Set<string>>(new Set());
+  const [usageError, setUsageError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    if (!session) return;
+    async function loadUsage() {
+      const { data, error } = await supabase.from("skill_usages").select("skill_key").eq("session_id", session!.id).eq("student_id", assignment.student_id);
+        if (cancelled) return;
+        setUsageError(error?.message ?? "");
+        setUsedKeys(new Set((data ?? []).map((u: { skill_key: string }) => u.skill_key)));
+    }
+    void loadUsage();
+    return () => { cancelled = true; };
+  }, [supabase, session, assignment.student_id, revision]);
 
   return (
     <Modal title={`${assignment.student.student_number}번 ${assignment.student.name}`} onClose={onClose} large>
@@ -1712,8 +1764,8 @@ function StudentModal({
             <strong>{ROLE_LABELS[assignment.role]}</strong> · 누적 {assignment.student.total_mp}MP
             <br />
             {assignment.group_no ? `${assignment.group_no}모둠` : "미배치"}
-            {["beginner", "mentor"].includes(assignment.role) && (
-              <><br />현재 역할 진행도 {Math.max(0, roleProgress(assignment))}/20</>
+            {nextPromotion && (
+              <><br />{version2 ? "누적 성장 MP" : "현재 역할 진행도"} {Math.max(0, nextPromotion.progress)}/{nextPromotion.threshold} · 다음 칭호 {ROLE_LABELS[nextPromotion.role]}</>
             )}
           </div>
 
@@ -1742,16 +1794,16 @@ function StudentModal({
 
           <h3 style={{ marginTop: 20 }}>역할 스킬</h3>
           <div className="action-grid">
-            {skills.map((skill) =>
+            {skills.filter((skill) => !skill.seasonTwo || skill.passive).map((skill) =>
               skill.passive ? (
                 <div className="action-card" key={skill.key} style={{ opacity: .72 }}>
                   <strong>{skill.label} · 패시브</strong>
                   <span>{skill.description}</span>
                 </div>
               ) : (
-                <button className="action-card" key={skill.key} type="button" disabled={!sessionActive || busy} onClick={() => onSkill(assignment, skill)}>
-                  <strong>{skill.label}</strong>
-                  <span>{skill.description}</span>
+                <button className="action-card" key={skill.key} type="button" disabled={!sessionActive || busy || (usedKeys.has(skill.key) && (version2 || ["beginner_luck", "retry"].includes(skill.key)) && skill.key !== "relief_pitcher_helped")} onClick={() => onSkill(assignment, skill)}>
+                  <strong>{skill.label}{sessionActive && usedKeys.has(skill.key) && (version2 || ["beginner_luck", "retry"].includes(skill.key)) && skill.key !== "relief_pitcher_helped" ? " · 사용 완료" : ""}</strong>
+                  <span>{skill.description}{version2 && skill.key !== "relief_pitcher_helped" && !skill.description.includes("수업당") ? " · 수업당 1회" : ""}</span>
                 </button>
               ),
             )}
@@ -1761,10 +1813,13 @@ function StudentModal({
               </div>
             )}
           </div>
+          {version2 && <SeasonTwoSkillActions assignment={assignment} assignments={assignments} session={session}
+            skills={skills.filter((skill) => skill.seasonTwo && !skill.passive)} usedKeys={usedKeys} busy={busy} onChange={onChange} />}
+          {usageError && <p className="warning-box">스킬 사용 기록 조회 실패: {usageError}</p>}
 
-          {eligiblePromotion && (
+          {nextPromotion?.eligible && (
             <button className="btn btn-gold btn-wide" style={{ marginTop: 16 }} type="button" disabled={busy} onClick={() => onPromote(assignment)}>
-              ✦ {assignment.role === "beginner" ? "수제자로" : "상급 수승님으로"} 승급 처리
+              ✦ {ROLE_LABELS[nextPromotion.role]} 승급 처리
             </button>
           )}
         </section>
@@ -1775,15 +1830,16 @@ function StudentModal({
             <div className="field">
               <label>현재 역할</label>
               <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
-                {ROLE_ORDER.map((item) => <option key={item} value={item}>{ROLE_LABELS[item]}</option>)}
+                {ROLE_ORDER.filter((item) => version2 || !["senior_disciple", "math_saint"].includes(item)).map((item) => <option key={item} value={item}>{ROLE_LABELS[item]}</option>)}
               </select>
             </div>
             <div className="warning-box">
-              담당 수승님은 자리 배치에 따라 자동 지정됩니다. 4인 모둠은 4→1, 3→2로 연결되고, 3인 모둠은 2·3번 학생이 1번 수승님과 연결됩니다. 역할 계열을 변경하면 새 역할의 성장 MP가 현재 누적 MP부터 다시 계산됩니다.
+              담당 수승님은 자리 배치에 따라 자동 지정됩니다. 4인 모둠은 4→1, 3→2로 연결되고, 3인 모둠은 2·3번 학생이 1번 수승님과 연결됩니다. {version2 ? "시즌 2는 역할이 바뀌어도 누적 MP로 성장합니다. 상점 기준은 첫 구매 때 고정됩니다." : "역할 계열을 변경하면 새 역할의 성장 MP가 현재 누적 MP부터 다시 계산됩니다."}
             </div>
-            <button className="btn btn-primary" type="button" disabled={busy} onClick={() => onUpdateRole(assignment, role)}>
+            <button className="btn btn-primary" type="button" disabled={busy || sessionActive} onClick={() => onUpdateRole(assignment, role)}>
               역할 설정 저장
             </button>
+            {sessionActive && <p className="quick-note">역할 설정은 수업 종료 후 변경할 수 있습니다.</p>}
           </div>
         </section>
       </div>

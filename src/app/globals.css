@@ -368,6 +368,21 @@ h1, h2, h3, p { margin-top: 0; }
 .role-senior_mentor .role-badge { color: #7b5003; background: #fff0c8; }
 .role-guardian { border-color: #0b9a76; background: linear-gradient(145deg, #ffffff, #e9fff8); }
 .role-guardian .role-badge { color: #087158; background: #d8f8ed; }
+.role-senior_disciple { border-color: #a23cb9; background: linear-gradient(145deg, #fff, #f8eaff); }
+.role-senior_disciple .role-badge { color: #79218d; background: #f5dfff; }
+.role-math_saint { border-color: #be8619; background: linear-gradient(145deg, #fff, #fff6d3); }
+.role-math_saint .role-badge { color: #6e4400; background: #ffe5a2; }
+.bulk-role-apply.role-senior_disciple { color: #79218d; background: #f5dfff; }
+.bulk-role-apply.role-math_saint { color: #6e4400; background: #ffe5a2; }
+.season-two-panel { margin-top: 16px; }
+.season-two-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.season-two-heading h2 { margin: 0; }
+.shop-products { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 14px 0; }
+.coupon-list { max-height: 360px; overflow: auto; }
+.coupon-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid #d8e1ef; flex-wrap: wrap; }
+.coupon-actions { display: flex; gap: 8px; }
+.effect-completed { opacity: .55; }
+.skill-target { background: #eef5ff; border-radius: 12px; padding: 12px; margin-top: 10px; }
 
 .unassigned-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .unassigned-zone {
